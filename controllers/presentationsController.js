@@ -1,4 +1,5 @@
 const prisma = require("../config/database");
+const userRole = require("../config/userRole");
 
 const getAllPresentations = async (req, res) => {
   try {
@@ -17,7 +18,7 @@ const getSinglePresentation = async (req, res) => {
     const {id} = req.params;
     const presentation = await prisma.presentation.findUnique({
       where: {id},
-      include: { creator: true }
+      include: { creator: true, slides: true }
     });
     res.json(presentation);
   } catch (error) {
@@ -38,4 +39,30 @@ const createNewPresentation = async (req, res) => {
   }
 }
 
-module.exports = {getAllPresentations, createNewPresentation, getSinglePresentation}
+const updateUserRole = async (req, res) => {
+  try {
+    const { presentationId, targetUserId } = req.params;
+    const { userId, role } = req.body;
+
+    const requesterSession = await prisma.presentationSession.findUnique({
+      where: { presentationId_userId: { presentationId, userId } },
+      select: { role: true }
+    });
+
+    if (requesterSession?.role !== userRole.CREATOR) {
+      return res.status(403).json({ error: 'Only creators can change roles' });
+    }
+
+    const updatedSession = await prisma.presentationSession.update({
+      where: { presentationId_userId: { presentationId, userId: targetUserId } },
+      data: { role },
+      include: { user: true }
+    });
+
+    res.json(updatedSession);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+}
+
+module.exports = {getAllPresentations, createNewPresentation, getSinglePresentation, updateUserRole}

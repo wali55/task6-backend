@@ -3,9 +3,9 @@ const express = require("express");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
-const prisma = require("./config/database");
 const usersRouter = require("./routes/users");
 const presentationsRouter = require("./routes/presentations");
+const slidesRouter = require("./routes/slides");
 const setupSocket = require("./socket/socket");
 
 const app = express();
@@ -25,6 +25,7 @@ app.use(express.json());
 
 app.use("/api/users", usersRouter);
 app.use('/api/presentations', presentationsRouter);
+app.use('/api/slides', slidesRouter);
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "OK" });

@@ -94,6 +94,73 @@ const setupSocket = (io) => {
       }
     });
 
+    socket.on("add-slide", async (data) => {
+      const { presentationId } = data;
+      try {
+        const lastSlide = await prisma.slide.findFirst({
+          where: { presentationId },
+          orderBy: { order: "desc" },
+        });
+
+        const slide = await prisma.slide.create({
+          data: {
+            presentationId,
+            order: (lastSlide?.order || 0) + 1,
+            content: { title: "New Slide", elements: [] },
+          },
+        });
+
+        io.to(presentationId).emit("slide-added", slide);
+      } catch (error) {
+        socket.emit("error", { message: error.message });
+      }
+    });
+
+    socket.on("delete-slide", async (data) => {
+      const { presentationId, slideId } = data;
+      try {
+        await prisma.slide.delete({
+          where: { id: slideId, presentationId },
+        });
+
+        io.to(presentationId).emit("slide-deleted", { slideId });
+      } catch (error) {
+        socket.emit("error", { message: error.message });
+      }
+    });
+
+    socket.on("change-user-role", async (data) => {
+      const { presentationId, targetUserId, role, userId } = data;
+      try {
+        const requesterSession = await prisma.presentationSession.findUnique({
+          where: { presentationId_userId: { presentationId, userId } },
+          select: { role: true },
+        });
+
+        if (requesterSession?.role !== "CREATOR") {
+          return socket.emit("error", {
+            message: "Only creators can change roles",
+          });
+        }
+
+        const updatedSession = await prisma.presentationSession.update({
+          where: {
+            presentationId_userId: { presentationId, userId: targetUserId },
+          },
+          data: { role },
+          include: { user: true },
+        });
+
+        io.to(presentationId).emit("role-changed", {
+          userId: targetUserId,
+          role,
+          session: updatedSession,
+        });
+      } catch (error) {
+        socket.emit("error", { message: error.message });
+      }
+    });
+
     socket.on("disconnecting", async () => {
       if (socket.presentationId && socket.userId) {
         try {
