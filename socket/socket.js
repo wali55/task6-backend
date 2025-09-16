@@ -48,9 +48,13 @@ const setupSocket = (io) => {
           include: { user: true },
         });
 
-        socket.emit("presentation-state", {
-          presentation,
-          slides: presentation.slides
+        io.emit("presentation-state", {
+          presentation: {
+            ...presentation,
+            isPresentMode: presentation.isPresentMode,
+            currentSlideId: presentation.currentSlideId,
+          },
+          slides: presentation.slides,
         });
 
         io.to(presentationId).emit("user-joined", {
@@ -99,11 +103,110 @@ const setupSocket = (io) => {
       }
     });
 
+    socket.on("start-presentation", async (data) => {
+      const { presentationId, userId } = data;
+      try {
+        const session = await prisma.presentationSession.findUnique({
+          where: { presentationId_userId: { presentationId, userId } },
+          select: { role: true },
+        });
+
+        if (session?.role !== "CREATOR") {
+          return socket.emit("error", {
+            message: "Only creators can start presentation",
+          });
+        }
+
+        const firstSlide = await prisma.slide.findFirst({
+          where: { presentationId },
+          orderBy: { order: "asc" },
+        });
+
+        const presentation = await prisma.presentation.update({
+          where: { id: presentationId },
+          data: {
+            isPresentMode: true,
+            currentSlideId: firstSlide?.id,
+          },
+        });
+
+        io.to(presentationId).emit("presentation-started", {
+          isPresentMode: true,
+          currentSlideId: firstSlide?.id,
+        });
+      } catch (error) {
+        socket.emit("error", { message: error.message });
+      }
+    });
+
+    socket.on("end-presentation", async (data) => {
+      const { presentationId, userId } = data;
+      try {
+        const session = await prisma.presentationSession.findUnique({
+          where: { presentationId_userId: { presentationId, userId } },
+          select: { role: true },
+        });
+
+        if (session?.role !== "CREATOR") {
+          return socket.emit("error", {
+            message: "Only creators can end presentation",
+          });
+        }
+
+        await prisma.presentation.update({
+          where: { id: presentationId },
+          data: {
+            isPresentMode: false,
+            currentSlideId: null,
+          },
+        });
+
+        io.to(presentationId).emit("presentation-ended");
+      } catch (error) {
+        socket.emit("error", { message: error.message });
+      }
+    });
+
+    socket.on("navigate-slide", async (data) => {
+      const { presentationId, slideId, userId } = data;
+      try {
+        const session = await prisma.presentationSession.findUnique({
+          where: { presentationId_userId: { presentationId, userId } },
+          select: { role: true },
+        });
+
+        if (session?.role !== "CREATOR") {
+          return socket.emit("error", {
+            message: "Only creators can navigate slides",
+          });
+        }
+
+        const slide = await prisma.slide.findUnique({
+          where: { id: slideId, presentationId },
+        });
+
+        if (!slide) {
+          return socket.emit("error", { message: "Slide not found" });
+        }
+
+        await prisma.presentation.update({
+          where: { id: presentationId },
+          data: { currentSlideId: slideId },
+        });
+
+        io.to(presentationId).emit("slide-navigated", {
+          currentSlideId: slideId,
+        });
+      } catch (error) {
+        socket.emit("error", { message: error.message });
+      }
+    });
+
     socket.on("add-text-block", async (data) => {
       const { presentationId, slideId, textBlock } = data;
       try {
         const slide = await prisma.slide.findUnique({
-          where: { id: slideId, presentationId }
+          where: { id: slideId, presentationId },
         });
 
         if (!slide) {
@@ -113,25 +216,25 @@ const setupSocket = (io) => {
         const content = slide.content || { elements: [] };
         const newBlock = {
           id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'text',
+          type: "text",
           x: textBlock.x || 100,
           y: textBlock.y || 100,
           width: textBlock.width || 200,
           height: textBlock.height || 100,
-          content: textBlock.content || 'New text block',
-          style: textBlock.style || {}
+          content: textBlock.content || "New text block",
+          style: textBlock.style || {},
         };
 
         content.elements = [...(content.elements || []), newBlock];
 
         await prisma.slide.update({
           where: { id: slideId },
-          data: { content }
+          data: { content },
         });
 
         io.to(presentationId).emit("text-block-added", {
           slideId,
-          textBlock: newBlock
+          textBlock: newBlock,
         });
       } catch (error) {
         socket.emit("error", { message: error.message });
@@ -142,7 +245,7 @@ const setupSocket = (io) => {
       const { presentationId, slideId, blockId, updates } = data;
       try {
         const slide = await prisma.slide.findUnique({
-          where: { id: slideId, presentationId }
+          where: { id: slideId, presentationId },
         });
 
         if (!slide) {
@@ -150,7 +253,9 @@ const setupSocket = (io) => {
         }
 
         const content = slide.content || { elements: [] };
-        const blockIndex = content.elements.findIndex(el => el.id === blockId);
+        const blockIndex = content.elements.findIndex(
+          (el) => el.id === blockId
+        );
 
         if (blockIndex === -1) {
           return socket.emit("error", { message: "Text block not found" });
@@ -158,18 +263,18 @@ const setupSocket = (io) => {
 
         content.elements[blockIndex] = {
           ...content.elements[blockIndex],
-          ...updates
+          ...updates,
         };
 
         await prisma.slide.update({
           where: { id: slideId },
-          data: { content }
+          data: { content },
         });
 
         io.to(presentationId).emit("text-block-updated", {
           slideId,
           blockId,
-          updates
+          updates,
         });
       } catch (error) {
         socket.emit("error", { message: error.message });
@@ -180,7 +285,7 @@ const setupSocket = (io) => {
       const { presentationId, slideId, blockId } = data;
       try {
         const slide = await prisma.slide.findUnique({
-          where: { id: slideId, presentationId }
+          where: { id: slideId, presentationId },
         });
 
         if (!slide) {
@@ -188,16 +293,16 @@ const setupSocket = (io) => {
         }
 
         const content = slide.content || { elements: [] };
-        content.elements = content.elements.filter(el => el.id !== blockId);
+        content.elements = content.elements.filter((el) => el.id !== blockId);
 
         await prisma.slide.update({
           where: { id: slideId },
-          data: { content }
+          data: { content },
         });
 
         io.to(presentationId).emit("text-block-deleted", {
           slideId,
-          blockId
+          blockId,
         });
       } catch (error) {
         socket.emit("error", { message: error.message });
@@ -211,24 +316,26 @@ const setupSocket = (io) => {
           slideId,
           blockId,
           x,
-          y
+          y,
         });
 
         const slide = await prisma.slide.findUnique({
-          where: { id: slideId, presentationId }
+          where: { id: slideId, presentationId },
         });
 
         if (slide) {
           const content = slide.content || { elements: [] };
-          const blockIndex = content.elements.findIndex(el => el.id === blockId);
-          
+          const blockIndex = content.elements.findIndex(
+            (el) => el.id === blockId
+          );
+
           if (blockIndex !== -1) {
             content.elements[blockIndex].x = x;
             content.elements[blockIndex].y = y;
-            
+
             await prisma.slide.update({
               where: { id: slideId },
-              data: { content }
+              data: { content },
             });
           }
         }

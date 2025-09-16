@@ -18,10 +18,12 @@ model User {
 }
 
 model Presentation {
-  id        String   @id @default(cuid())
-  title     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(cuid())
+  title          String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  isPresentMode  Boolean  @default(false)
+  currentSlideId String?
 
   creatorId String
   creator   User                  @relation(fields: [creatorId], references: [id])
