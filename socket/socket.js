@@ -48,6 +48,11 @@ const setupSocket = (io) => {
           include: { user: true },
         });
 
+        socket.emit("presentation-state", {
+          presentation,
+          slides: presentation.slides
+        });
+
         io.to(presentationId).emit("user-joined", {
           userId,
           nickname,
@@ -91,6 +96,144 @@ const setupSocket = (io) => {
       } catch (error) {
         socket.emit("error", { message: error.message });
         console.error("Leave-presentation error:", error);
+      }
+    });
+
+    socket.on("add-text-block", async (data) => {
+      const { presentationId, slideId, textBlock } = data;
+      try {
+        const slide = await prisma.slide.findUnique({
+          where: { id: slideId, presentationId }
+        });
+
+        if (!slide) {
+          return socket.emit("error", { message: "Slide not found" });
+        }
+
+        const content = slide.content || { elements: [] };
+        const newBlock = {
+          id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'text',
+          x: textBlock.x || 100,
+          y: textBlock.y || 100,
+          width: textBlock.width || 200,
+          height: textBlock.height || 100,
+          content: textBlock.content || 'New text block',
+          style: textBlock.style || {}
+        };
+
+        content.elements = [...(content.elements || []), newBlock];
+
+        await prisma.slide.update({
+          where: { id: slideId },
+          data: { content }
+        });
+
+        io.to(presentationId).emit("text-block-added", {
+          slideId,
+          textBlock: newBlock
+        });
+      } catch (error) {
+        socket.emit("error", { message: error.message });
+      }
+    });
+
+    socket.on("update-text-block", async (data) => {
+      const { presentationId, slideId, blockId, updates } = data;
+      try {
+        const slide = await prisma.slide.findUnique({
+          where: { id: slideId, presentationId }
+        });
+
+        if (!slide) {
+          return socket.emit("error", { message: "Slide not found" });
+        }
+
+        const content = slide.content || { elements: [] };
+        const blockIndex = content.elements.findIndex(el => el.id === blockId);
+
+        if (blockIndex === -1) {
+          return socket.emit("error", { message: "Text block not found" });
+        }
+
+        content.elements[blockIndex] = {
+          ...content.elements[blockIndex],
+          ...updates
+        };
+
+        await prisma.slide.update({
+          where: { id: slideId },
+          data: { content }
+        });
+
+        io.to(presentationId).emit("text-block-updated", {
+          slideId,
+          blockId,
+          updates
+        });
+      } catch (error) {
+        socket.emit("error", { message: error.message });
+      }
+    });
+
+    socket.on("delete-text-block", async (data) => {
+      const { presentationId, slideId, blockId } = data;
+      try {
+        const slide = await prisma.slide.findUnique({
+          where: { id: slideId, presentationId }
+        });
+
+        if (!slide) {
+          return socket.emit("error", { message: "Slide not found" });
+        }
+
+        const content = slide.content || { elements: [] };
+        content.elements = content.elements.filter(el => el.id !== blockId);
+
+        await prisma.slide.update({
+          where: { id: slideId },
+          data: { content }
+        });
+
+        io.to(presentationId).emit("text-block-deleted", {
+          slideId,
+          blockId
+        });
+      } catch (error) {
+        socket.emit("error", { message: error.message });
+      }
+    });
+
+    socket.on("move-text-block", async (data) => {
+      const { presentationId, slideId, blockId, x, y } = data;
+      try {
+        io.to(presentationId).emit("text-block-moved", {
+          slideId,
+          blockId,
+          x,
+          y
+        });
+
+        const slide = await prisma.slide.findUnique({
+          where: { id: slideId, presentationId }
+        });
+
+        if (slide) {
+          const content = slide.content || { elements: [] };
+          const blockIndex = content.elements.findIndex(el => el.id === blockId);
+          
+          if (blockIndex !== -1) {
+            content.elements[blockIndex].x = x;
+            content.elements[blockIndex].y = y;
+            
+            await prisma.slide.update({
+              where: { id: slideId },
+              data: { content }
+            });
+          }
+        }
+      } catch (error) {
+        socket.emit("error", { message: error.message });
       }
     });
 
@@ -177,7 +320,7 @@ const setupSocket = (io) => {
             include: { user: true },
           });
 
-          socket.to(socket.presentationId).emit("user-left", {
+          io.to(socket.presentationId).emit("user-left", {
             userId: socket.userId,
             activeUsers,
           });
